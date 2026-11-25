@@ -1,0 +1,8 @@
+{
+  "name": "Galactic War: The Last Stand",
+  "description": "Phase 1 planetary battlefield on Aether Prime featuring five interconnected war-torn regions, destruction-ready architecture, and the cinematic introduction of The Sovereign.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
