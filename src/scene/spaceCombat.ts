@@ -4763,15 +4763,24 @@ export function buildSpaceCombatTheater(
           ? { name: region.capitalShipName, shipClass: region.capitalShipClass }
           : null;
 
-    if (capSpec && (!saved?.capitalShipStatus || !saved.capitalShipStatus.destroyed)) {
+    if (capSpec && !activeExtLevel?.bossId && (!saved?.capitalShipStatus || !saved.capitalShipStatus.destroyed)) {
       const capZone =
         region.encounterZones.find((z) => z.hasCapitalShip) ??
         region.encounterZones[region.encounterZones.length - 1];
-      const capPos = new THREE.Vector3(
-        activeCenter.x + capZone.offsetFromRegionCenter[0],
-        activeCenter.y + capZone.offsetFromRegionCenter[1],
-        activeCenter.z + capZone.offsetFromRegionCenter[2],
-      );
+      const capPos = activeExtLevel
+        ? new THREE.Vector3(
+            shipSafeSpawn.x + 140,
+            shipSafeSpawn.y + 65,
+            shipSafeSpawn.z - 1480,
+          )
+        : new THREE.Vector3(
+            activeCenter.x + capZone.offsetFromRegionCenter[0],
+            activeCenter.y + capZone.offsetFromRegionCenter[1],
+            activeCenter.z + capZone.offsetFromRegionCenter[2],
+          );
+      if (activeExtLevel) {
+        clearAsteroidsForBossSpawn(capPos, 320);
+      }
       const shieldRed =
         capSpec.shipClass === 'sovereign_flagship'
           ? decisionEffects.capitalShipShieldReduction + decisionEffects.sovereignFlagshipWeakenedPct
@@ -4807,22 +4816,9 @@ export function buildSpaceCombatTheater(
     ];
 
     if (activeExtLevel) {
-      // Extinction Campaign: Controlled Staged Battle Director + Validated Boss State Machines
+      // Extinction Campaign: Controlled Staged Battle Director + Deterministic Boss Emergence
       battleDirector = createBattleDirector(activeExtLevel.battleStages);
-      activeBossSm = activeExtLevel.bossId
-        ? createBossStateMachine(activeExtLevel.bossId, diffEnemyHpMult)
-        : null;
-
-      if (activeCapitalShip && activeBossSm) {
-        // Align capital warship maxHull/maxShield cleanly to Boss State Machine scale
-        activeBossSm = {
-          ...activeBossSm,
-          hp: activeCapitalShip.status.hull,
-          maxHp: activeCapitalShip.status.maxHull,
-          shield: activeCapitalShip.status.shield,
-          maxShield: activeCapitalShip.status.maxShield,
-        };
-      }
+      activeBossSm = null;
 
       if (activeExtLevel.extractionRequired) {
         const prevTrack = trackingSectorGeos;
@@ -4854,63 +4850,32 @@ export function buildSpaceCombatTheater(
           `ext_${activeExtLevel.id}_s1`,
           region,
         );
-        if (activeExtLevel.bossId === 'executioner' && activeBossSm) {
-          const execMesh = buildAlienStarfighterMesh('elite_ace', undefined, {
-            isExecutionerBoss: true,
-          });
-          const execPos = new THREE.Vector3(
-            shipSafeSpawn.x + 140,
-            shipSafeSpawn.y + 70,
-            shipSafeSpawn.z - 860,
+        if (stage1.spawnBossOnEnter && activeExtLevel.bossId) {
+          spawnExtinctionBossEncounter(
+            shipSafeSpawn,
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(0, 1, 0),
+            new THREE.Vector3(1, 0, 0),
+            'STAGE_1_ENTER',
           );
-          execMesh.position.copy(execPos);
-          sectorDynamicGroup.add(execMesh);
-          enemies.push({
-            id: 'boss_executioner',
-            zoneId: region.encounterZones[0].id,
-            zoneCenter: execPos.clone(),
-            name: 'The Executioner · Vaelen Korr',
-            role: 'elite_ace',
-            shipClass: 'fighter',
-            isCorvette: false,
-            isLegendary: true,
-            isExecutionerBoss: true,
-            root: execMesh,
-            pos: execPos,
-            vel: new THREE.Vector3(),
-            health: activeBossSm.maxHp,
-            maxHealth: activeBossSm.maxHp,
-            shield: activeBossSm.maxShield,
-            maxShield: activeBossSm.maxShield,
-            empStunTimer: 0,
-            lastHitAge: 99,
-            destroyedFlashTimer: 0,
-            alive: true,
-            orbitAngle: 0,
-            orbitRadius: 290,
-            orbitHeight: 65,
-            orbitSpeed: 0.6,
-            flankPhase: 0.4,
-            squadSlot: 0,
-            evasionTimer: 0,
-            aceFlareCooldown: 3.5,
-            fireCooldown: 1.15,
-            missileCooldown: 6.5,
-            escapeTimer: 999,
-            aiAccumDt: 0,
-            maneuverState: 'high_speed_flyby',
-            stateTimer: 3.0,
-            strafeSign: 1,
-            verticalSign: 1,
-            currentBankRad: 0,
-          });
-          activeMissionEventBanner = `MINI-BOSS: ${activeBossSm.bossName.toUpperCase()}`;
-          activeMissionEventTimer = 5.0;
-          callbacks.onExtinctionAudioCue?.('boss_intro');
-        } else if (activeBossSm) {
-          activeMissionEventBanner = `${activeBossSm.bossKind === 'mini_boss' ? 'MINI-BOSS' : 'MAJOR BOSS'}: ${activeBossSm.bossName.toUpperCase()}`;
-          activeMissionEventTimer = 5.0;
-          callbacks.onExtinctionAudioCue?.('boss_intro');
+        } else if (activeExtLevel.bossId) {
+          activeMissionEventBanner = stage1.headline;
+          activeMissionEventTimer = 4.5;
+          recordEncounterTransition(
+            'STAGE_1_VANGUARD',
+            activeExtLevel.bossId,
+            'WAITING_FOR_STAGE_1_CLEAR',
+            'Awaiting Stage 1 vanguard clear before boss emergence',
+          );
+        } else {
+          activeMissionEventBanner = stage1.headline;
+          activeMissionEventTimer = 4.5;
+          recordEncounterTransition(
+            'STAGE_1_ACTIVE',
+            null,
+            'NON_BOSS_MISSION',
+            'Non-boss Extinction mission initialized',
+          );
         }
         if (stage1.triggerEvents) {
           for (const evt of stage1.triggerEvents) {
@@ -5401,10 +5366,28 @@ export function buildSpaceCombatTheater(
     railChargeSec = 0;
   };
 
+  const getHarvesterCoreWorldPos = (
+    coreId: HarvesterEnergyCoreState['id'],
+    out: THREE.Vector3,
+  ): boolean => {
+    const cm = activeCapitalShip?.harvesterCoreMeshes?.find((m) => m.id === coreId);
+    const coreState = activeBossSm?.harvesterCores.find((c) => c.id === coreId);
+    if (!cm || !coreState || coreState.destroyed) return false;
+    cm.coreMesh.getWorldPosition(out);
+    return true;
+  };
+
   const cycleTarget = () => {
     const targets: Array<
-      { type: 'subsystem'; key: CapitalSubsystemKey } | { type: 'fighter'; fighter: EnemyStarfighter }
+      | { type: 'harvester_core'; core: HarvesterEnergyCoreState }
+      | { type: 'subsystem'; key: CapitalSubsystemKey }
+      | { type: 'fighter'; fighter: EnemyStarfighter }
     > = [];
+    if (activeBossSm?.bossId === 'void_harvester' && activeCapitalShip && !activeCapitalShip.status.destroyed) {
+      for (const c of activeBossSm.harvesterCores) {
+        if (!c.destroyed) targets.push({ type: 'harvester_core', core: c });
+      }
+    }
     if (activeCapitalShip && !activeCapitalShip.status.destroyed) {
       CAPITAL_SUBSYSTEM_KEYS.forEach((k) => {
         if (!activeCapitalShip!.status.subsystems[k].destroyed) {
@@ -5418,14 +5401,26 @@ export function buildSpaceCombatTheater(
     if (targets.length === 0) return;
 
     let currentIdx = -1;
-    if (selectedSubsystem && !lockedTarget) {
+    if (selectedHarvesterCoreId) {
+      currentIdx = targets.findIndex(
+        (t) => t.type === 'harvester_core' && t.core.id === selectedHarvesterCoreId,
+      );
+    } else if (selectedSubsystem && !lockedTarget) {
       currentIdx = targets.findIndex((t) => t.type === 'subsystem' && t.key === selectedSubsystem);
     } else if (lockedTarget) {
       currentIdx = targets.findIndex((t) => t.type === 'fighter' && t.fighter.id === lockedTarget!.id);
     }
 
     const next = targets[(currentIdx + 1) % targets.length];
-    if (next.type === 'subsystem') {
+    if (next.type === 'harvester_core') {
+      selectedHarvesterCoreId = next.core.id;
+      selectedSubsystem = null;
+      manualSubsystemLock = true;
+      lockedTarget = null;
+      lockProgress = 1.0;
+      showToast(`LOCKED HARVESTER CORE: ${next.core.label.toUpperCase()}`, 2.0);
+    } else if (next.type === 'subsystem') {
+      selectedHarvesterCoreId = null;
       selectedSubsystem = next.key;
       manualSubsystemLock = true;
       lockedTarget = null;
@@ -5433,6 +5428,7 @@ export function buildSpaceCombatTheater(
       const subLabel = activeCapitalShip!.status.subsystems[next.key].label;
       showToast(`LOCKED SUBSYSTEM: ${activeCapitalShip!.status.name.toUpperCase()} -> ${subLabel.toUpperCase()}`, 2.0);
     } else {
+      selectedHarvesterCoreId = null;
       selectedSubsystem = null;
       manualSubsystemLock = false;
       lockedTarget = next.fighter;
@@ -5655,8 +5651,17 @@ export function buildSpaceCombatTheater(
     let hasValidTarget = false;
     let targetDist = Infinity;
     let targetForwardCos = -1;
+    const useHarvesterCoreTarget =
+      !lockedTarget &&
+      Boolean(
+        selectedHarvesterCoreId &&
+        activeCapitalShip &&
+        !activeCapitalShip.status.destroyed &&
+        getHarvesterCoreWorldPos(selectedHarvesterCoreId, tmpSubPos),
+      );
     const useSubsystemTarget =
       !lockedTarget &&
+      !useHarvesterCoreTarget &&
       Boolean(
         selectedSubsystem &&
         activeCapitalShip &&
@@ -5668,6 +5673,12 @@ export function buildSpaceCombatTheater(
       hasValidTarget = true;
       targetDist = lockedTarget.pos.distanceTo(s.root.position);
       tmpVec.subVectors(lockedTarget.pos, s.root.position).normalize();
+      targetForwardCos = tmpVec.dot(shipForward);
+    } else if (useHarvesterCoreTarget && selectedHarvesterCoreId) {
+      getHarvesterCoreWorldPos(selectedHarvesterCoreId, tmpSubPos);
+      hasValidTarget = true;
+      targetDist = tmpSubPos.distanceTo(s.root.position);
+      tmpVec.subVectors(tmpSubPos, s.root.position).normalize();
       targetForwardCos = tmpVec.dot(shipForward);
     } else if (useSubsystemTarget && selectedSubsystem && activeCapitalShip) {
       getSubsystemWorldPos(activeCapitalShip, selectedSubsystem, tmpSubPos);
@@ -5721,13 +5732,17 @@ export function buildSpaceCombatTheater(
       {
         targetEnemy: lockedTarget && lockedTarget.alive ? lockedTarget : undefined,
         targetSubsystem: useSubsystemTarget && selectedSubsystem ? selectedSubsystem : undefined,
+        targetHarvesterCoreId:
+          useHarvesterCoreTarget && selectedHarvesterCoreId ? selectedHarvesterCoreId : undefined,
         guidanceRemainingSec: missileBallistics.missileMaxGuidanceSec ?? 3.6,
       },
     );
     showToast(
       lockedTarget && lockedTarget.alive
         ? `HOMING MISSILE LOCK -> ${lockedTarget.name.toUpperCase()} (${vitals.missiles} LEFT)`
-        : `HOMING MISSILE LOCK -> ${activeCapitalShip!.status.subsystems[selectedSubsystem!].label.toUpperCase()} (${vitals.missiles} LEFT)`,
+        : useHarvesterCoreTarget && selectedHarvesterCoreId
+          ? `HOMING MISSILE LOCK -> ${selectedHarvesterCoreId.replace('core_', '').toUpperCase()} ENERGY CORE (${vitals.missiles} LEFT)`
+          : `HOMING MISSILE LOCK -> ${activeCapitalShip!.status.subsystems[selectedSubsystem!].label.toUpperCase()} (${vitals.missiles} LEFT)`,
       1.6,
     );
     callbacks.onMissileLaunch?.(launchLeft ? -0.28 : 0.28);
@@ -5788,6 +5803,15 @@ export function buildSpaceCombatTheater(
         leadFactor: 0.9,
       });
       tmpVec.set(leadPt.x - ship.root.position.x, leadPt.y - ship.root.position.y, leadPt.z - ship.root.position.z).normalize();
+      candidateTargetDir = { x: tmpVec.x, y: tmpVec.y, z: tmpVec.z };
+    } else if (
+      selectedHarvesterCoreId &&
+      activeCapitalShip &&
+      !activeCapitalShip.status.destroyed &&
+      getHarvesterCoreWorldPos(selectedHarvesterCoreId, tmpSubPos)
+    ) {
+      candidateDist = tmpSubPos.distanceTo(ship.root.position);
+      tmpVec.subVectors(tmpSubPos, ship.root.position).normalize();
       candidateTargetDir = { x: tmpVec.x, y: tmpVec.y, z: tmpVec.z };
     } else if (selectedSubsystem && activeCapitalShip && !activeCapitalShip.status.destroyed) {
       getSubsystemWorldPos(activeCapitalShip, selectedSubsystem, tmpSubPos);
@@ -6455,6 +6479,16 @@ export function buildSpaceCombatTheater(
             playerInRange: capInRange,
           });
           activeBossSm = stepRes.state;
+          bossAiStateLabel = activeBossSm.defeated
+            ? 'defeated'
+            : activeBossSm.telegraphActive
+              ? 'telegraph_windup'
+              : activeCapitalShip
+                ? 'capital_helm_active'
+                : execEnemy
+                  ? `dogfight:${execEnemy.maneuverState}`
+                  : 'active';
+          bossTargetAssigned = bossEntityCreated && !activeBossSm.defeated && playable;
 
           if (!prevTelegraph && activeBossSm.telegraphActive && activeBossSm.telegraphLabel) {
             showToast(`WARNING: ${activeBossSm.telegraphLabel} CHARGING — EVADE!`, 2.2);
@@ -6471,6 +6505,19 @@ export function buildSpaceCombatTheater(
                 ? 'sovereign_collapse'
                 : 'boss_phase',
             );
+            recordEncounterTransition(
+              stepRes.transition.toPhase === 4 ? 'BOSS_DEFEATED' : `BOSS_PHASE_${stepRes.transition.toPhase}`,
+              activeBossSm.bossId,
+              'SATISFIED',
+              `Boss transitioned ${stepRes.transition.fromPhase} -> ${stepRes.transition.toPhase}`,
+            );
+            if (activeBossSm.bossId === 'void_harvester' && stepRes.transition.toPhase === 2) {
+              const firstCore = activeBossSm.harvesterCores.find((c) => !c.destroyed)?.id ?? null;
+              selectedHarvesterCoreId = firstCore;
+              selectedSubsystem = null;
+              manualSubsystemLock = Boolean(firstCore);
+              showToast('CENTRAL BARRIER LOCKED — TARGET GLOWING ENERGY CORES [TAB]!', 3.6);
+            }
           }
 
           if (
@@ -6539,6 +6586,18 @@ export function buildSpaceCombatTheater(
           }
 
           if (stepRes.meltdownFinishedNow) {
+            if (activeBossSm.bossId === 'sovereign_extinction' && activeCapitalShip) {
+              for (const rem of enemies) {
+                if (!rem.alive) continue;
+                if (rem.pos.distanceTo(activeCapitalShip.root.position) <= 4200) {
+                  rem.alive = false;
+                  rem.destroyedFlashTimer = 0.8;
+                  sectorDynamicGroup.remove(rem.root);
+                  kills++;
+                  missionKills++;
+                }
+              }
+            }
             checkSpaceMissionCompletion();
           }
         }
@@ -6599,9 +6658,21 @@ export function buildSpaceCombatTheater(
           battleDirector = bdRes.state;
           if (bdRes.advancedToStage) {
             activeMissionEventBanner = bdRes.advancedToStage.headline;
-            activeMissionEventTimer = 4.5;
+            activeMissionEventTimer = 4.8;
             showToast(bdRes.advancedToStage.headline, 3.2);
             callbacks.onStageOrBossBanner?.(bdRes.advancedToStage.headline, 'warning');
+            if (bdRes.advancedToStage.spawnBossOnEnter && activeExtLevel.bossId) {
+              shipForward.set(0, 0, -1).applyQuaternion(ship.root.quaternion).normalize();
+              shipRight.set(1, 0, 0).applyQuaternion(ship.root.quaternion).normalize();
+              shipUp.set(0, 1, 0).applyQuaternion(ship.root.quaternion).normalize();
+              spawnExtinctionBossEncounter(
+                ship.root.position,
+                shipForward,
+                shipUp,
+                shipRight,
+                `STAGE_${bdRes.advancedToStage.stageNumber}_TRIGGER`,
+              );
+            }
           }
           if (bdRes.spawnWave) {
             spawnExtinctionWaveMap(
@@ -7650,11 +7721,23 @@ export function buildSpaceCombatTheater(
         railChargeAudioTick = 0;
       }
 
-      // Target Lock-On (supports Capital Ship 5 Subsystems + automatic Fighter Escort Lock-On!)
-      // Only lock onto the capital ship subsystem if manually selected via [Tab] OR aiming toward the capital ship;
-      // otherwise allow automatic missile lock onto enemy fighters directly in front of the player's nose!
+      // Target Lock-On (supports Capital Ship Subsystems, Void Harvester Energy Cores + Fighter Lock-On!)
+      let preferCoreLock = false;
+      if (
+        selectedHarvesterCoreId &&
+        activeCapitalShip &&
+        !activeCapitalShip.status.destroyed &&
+        getHarvesterCoreWorldPos(selectedHarvesterCoreId, tmpSubPos)
+      ) {
+        const coreDist = tmpSubPos.distanceTo(ship.root.position);
+        tmpVec.subVectors(tmpSubPos, ship.root.position).normalize();
+        const coreDot = tmpVec.dot(shipForward);
+        preferCoreLock = manualSubsystemLock || (coreDist < 3600 && coreDot > 0.72);
+      }
+
       let preferSubsystemLock = false;
       if (
+        !preferCoreLock &&
         selectedSubsystem &&
         activeCapitalShip &&
         !activeCapitalShip.status.destroyed &&
@@ -7667,7 +7750,16 @@ export function buildSpaceCombatTheater(
         preferSubsystemLock = manualSubsystemLock || (capDist < 4800 && capDot > 0.72);
       }
 
-      if (preferSubsystemLock && selectedSubsystem && activeCapitalShip) {
+      if (preferCoreLock && selectedHarvesterCoreId && activeCapitalShip && getHarvesterCoreWorldPos(selectedHarvesterCoreId, tmpSubPos)) {
+        tmpProj.copy(tmpSubPos).project(camera);
+        targetInView = tmpProj.z > -1 && tmpProj.z < 1;
+        targetScreenX = (tmpProj.x + 1) * 0.5;
+        targetScreenY = (1 - tmpProj.y) * 0.5;
+        lockProgress = 1.0;
+        lockGraceSec = 0;
+        lockedTarget = null;
+        latestPredictiveLeadReticle = null;
+      } else if (preferSubsystemLock && selectedSubsystem && activeCapitalShip) {
         getSubsystemWorldPos(activeCapitalShip, selectedSubsystem, tmpSubPos);
         tmpProj.copy(tmpSubPos).project(camera);
         targetInView = tmpProj.z > -1 && tmpProj.z < 1;
@@ -7892,20 +7984,27 @@ export function buildSpaceCombatTheater(
         const worldRadiusMeters =
           e.shipClass === 'medium'
             ? 36
-            : e.isLegendary
-              ? 21
-              : e.role === 'elite_ace'
-                ? 19.5
-                : e.role === 'heavy_fighter' || e.role === 'bomber'
-                  ? 17.5
-                  : 15.2;
+            : e.isExecutionerBoss
+              ? 30
+              : e.isLegendary
+                ? 21
+                : e.role === 'elite_ace'
+                  ? 19.5
+                  : e.role === 'heavy_fighter' || e.role === 'bomber'
+                    ? 17.5
+                    : 15.2;
+
+        if (e.isExecutionerBoss) {
+          bossLastInCameraView =
+            inFront && screenX >= -0.05 && screenX <= 1.05 && screenY >= -0.05 && screenY <= 1.05;
+        }
 
         targetCandidates.push({
           id: e.id,
-          name: e.name,
+          name: e.isExecutionerBoss ? 'MINI-BOSS · THE EXECUTIONER' : e.name,
           role: e.role,
           shipClass: e.shipClass,
-          threatLevel: deriveThreatLevel(e.shipClass, e.role),
+          threatLevel: e.isExecutionerBoss ? 'elite' : deriveThreatLevel(e.shipClass, e.role),
           anchorX: screenX,
           anchorY: screenY,
           inFront,
@@ -7915,7 +8014,7 @@ export function buildSpaceCombatTheater(
           hullPct,
           hasShields: e.maxShield > 0,
           isTargeted,
-          isAttacking: e.fireCooldown < 0.85 || dist < 920,
+          isAttacking: e.isExecutionerBoss || e.fireCooldown < 0.85 || dist < 920,
           wasRecentlyHit: e.lastHitAge < 3.2,
           justDestroyed,
           isOccluded,

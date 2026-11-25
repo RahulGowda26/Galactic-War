@@ -246,3 +246,53 @@ test('Controlled Battle Director advances finite stages without infinite spawnin
   }
   assert.equal(firedBeam, true);
 });
+
+test('All six Extinction boss levels require Stage 1 clear before spawning Boss on Stage 2 and suppress post-defeat surprise waves', () => {
+  for (const bossLvlId of ['ext_l03', 'ext_l05', 'ext_l06', 'ext_l08', 'ext_l09', 'ext_l10']) {
+    const lvl = getExtinctionLevelById(bossLvlId)!;
+    assert.equal(Boolean(lvl.battleStages[0].spawnBossOnEnter), false, `${bossLvlId} must not spawn boss on Stage 1 start`);
+    assert.equal(lvl.battleStages[0].advanceWhen, 'stage_cleared');
+    assert.equal(Boolean(lvl.battleStages[1]?.spawnBossOnEnter), true, `${bossLvlId} Stage 2 must trigger boss arrival`);
+
+    let bd = createBattleDirector(lvl.battleStages);
+    const hold = stepBattleDirector(bd, {
+      dt: 0.25,
+      aliveHostiles: 2,
+      bossPhase: 0,
+      bossDefeated: false,
+      survivalElapsedMet: false,
+      extractionReached: false,
+    });
+    assert.equal(hold.advancedToStage, null);
+
+    // Wait >= 0.4s and clear Stage 1 hostiles -> deterministic Stage 2 Boss Arrival triggers once
+    bd = stepBattleDirector(hold.state, {
+      dt: 0.25,
+      aliveHostiles: 0,
+      bossPhase: 0,
+      bossDefeated: false,
+      survivalElapsedMet: false,
+      extractionReached: false,
+    }).state;
+    const enterBoss = stepBattleDirector(bd, {
+      dt: 0.1,
+      aliveHostiles: 0,
+      bossPhase: 0,
+      bossDefeated: false,
+      survivalElapsedMet: false,
+      extractionReached: false,
+    });
+    assert.equal(enterBoss.advancedToStage?.spawnBossOnEnter, true);
+
+    // Suppress surprise waves when passing through intermediate stages with bossDefeated already true
+    const fastForward = stepBattleDirector(enterBoss.state, {
+      dt: 0.25,
+      aliveHostiles: 0,
+      bossPhase: 4,
+      bossDefeated: true,
+      survivalElapsedMet: false,
+      extractionReached: false,
+    });
+    assert.equal(fastForward.spawnWave, null);
+  }
+});
